@@ -1,0 +1,96 @@
+{
+  "num_classes": 20,
+  "model_params": 4018064,
+  "trainable_params": 4018064,
+  "state_dict_tensors": 365,
+  "state_dict_numel": 4060129,
+  "features_params": 4007548,
+  "classifier_params": 10516,
+  "train_samples": 9427,
+  "val_samples": 2345,
+  "best_epoch": 12,
+  "best_val_top1": 81.83368869936034,
+  "best_val_top5": 91.68443496801706,
+  "best_val_loss": 1.1454214923163213,
+  "last_epoch": 15,
+  "last_val_top1": 80.76759061833688,
+  "last_val_top5": 91.47121535181236,
+  "last_val_loss": 1.1496123370712499,
+  "macro_class_accuracy": 74.61210739310619,
+  "worst_classes": [
+    {
+      "class_id": 5,
+      "class_name": "A6",
+      "correct": 0,
+      "total": 48,
+      "accuracy": 0.0
+    },
+    {
+      "class_id": 14,
+      "class_name": "A15",
+      "correct": 19,
+      "total": 75,
+      "accuracy": 25.333333333333332
+    },
+    {
+      "class_id": 10,
+      "class_name": "A11",
+      "correct": 10,
+      "total": 29,
+      "accuracy": 34.48275862068966
+    },
+    {
+      "class_id": 11,
+      "class_name": "A12",
+      "correct": 57,
+      "total": 86,
+      "accuracy": 66.27906976744185
+    },
+    {
+      "class_id": 18,
+      "class_name": "A19",
+      "correct": 79,
+      "total": 107,
+      "accuracy": 73.83177570093459
+    }
+  ],
+  "best_classes": [
+    {
+      "class_id": 1,
+      "class_name": "A2",
+      "correct": 218,
+      "total": 221,
+      "accuracy": 98.64253393665159
+    },
+    {
+      "class_id": 7,
+      "class_name": "A8",
+      "correct": 88,
+      "total": 94,
+      "accuracy": 93.61702127659575
+    },
+    {
+      "class_id": 15,
+      "class_name": "A16",
+      "correct": 254,
+      "total": 276,
+      "accuracy": 92.02898550724638
+    },
+    {
+      "class_id": 9,
+      "class_name": "A10",
+      "correct": 104,
+      "total": 114,
+      "accuracy": 91.2280701754386
+    },
+    {
+      "class_id": 8,
+      "class_name": "A9",
+      "correct": 92,
+      "total": 101,
+      "accuracy": 91.08910891089108
+    }
+  ],
+  "best_checkpoint": "/srv/share/hackathon/aircraft_classification/logs/efficientnet_b0_qnn_mar20_cls_cpu_finetune/2026_05_16_20_04_59/checkpoints/best.pth",
+  "last_checkpoint": "/srv/share/hackathon/aircraft_classification/logs/efficientnet_b0_qnn_mar20_cls_cpu_finetune/2026_05_16_20_04_59/checkpoints/last.pth"
+}

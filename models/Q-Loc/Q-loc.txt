@@ -1,0 +1,687 @@
+Q-Loc 模型说明：让没有完整代码的人也能理解这个图像定位模型
+============================================================
+
+目录位置：
+/srv/share/hackathon/QReady-SepaLightQ/models/Q-Loc
+
+一句话总结
+----------
+Q-Loc 是一个基于 YOLOv7 的一阶段目标检测/图像定位模型。普通版本沿用 YOLOv7 的 CNN Backbone、SPPCSPC、FPN/PAN 多尺度融合和 P3/P4/P5 三尺度检测头；量子版本没有把整个 YOLO 改成量子神经网络，而是在 YOLO 的中间特征流中加入 6-qubit QNN 分支，用量子线路产生通道级 gate，对 CNN 特征进行增强或重标定。
+
+它的核心思想可以写成：
+
+    普通 YOLOv7:
+        image -> CNN Backbone -> SPPCSPC -> FPN/PAN -> P3/P4/P5 YOLO heads
+
+    Q-Loc 量子增强版:
+        image -> CNN Backbone -> SPPCSPC(+QNN) -> FPN/PAN -> Quantum RepConv on P3/P4/P5 -> YOLO heads
+
+其中 QNN 不是最终检测头，不直接输出框；它的作用更像一种量子版 channel attention / feature modulation。
+
+
+一、主要文件和职责
+------------------
+
+1. nets/backbone.py
+
+定义 YOLOv7 风格的 CNN 主干网络组件：
+
+- autopad(k, p=None)
+  自动计算卷积 padding。
+
+- SiLU
+  激活函数，计算 x * sigmoid(x)。
+
+- Conv
+  基础卷积块：
+
+      Conv2d -> BatchNorm2d -> activation
+
+  默认 activation 是自定义 SiLU。
+
+- Multi_Concat_Block
+  YOLOv7/ELAN 风格的多分支特征拼接块。它先用两个 1x1 Conv 分支生成 x_1 和 x_2，然后对 x_2 连续做多层 3x3 Conv，把若干中间输出按 ids 选择后 concat，再用 1x1 Conv 融合。
+
+- MP
+  MaxPool2d 下采样。
+
+- Transition_Block
+  下采样过渡块，有两条分支：
+
+      分支 1: MaxPool -> 1x1 Conv
+      分支 2: 1x1 Conv -> 3x3 stride=2 Conv
+      输出: concat(分支2, 分支1)
+
+- Backbone
+  YOLOv7 主干。输入一般是 640x640x3，经过 stem、dark2、dark3、dark4、dark5，输出三个有效特征层：
+
+      feat1: 来自 dark3，高分辨率，约 80x80，用于小目标/细粒度位置
+      feat2: 来自 dark4，中分辨率，约 40x40
+      feat3: 来自 dark5，低分辨率，约 20x20，用于大目标/语义信息
+
+
+2. nets/yolo.py
+
+定义标准 YOLOv7 检测模型 YoloBody。
+
+关键模块：
+
+- SPPCSPC
+  YOLOv7 的空间金字塔池化 CSP 模块。它对最深层 feat3 做多尺度 max pooling，增强大感受野语义信息。
+
+- RepConv
+  RepVGG 风格重参数化卷积。训练时有 3x3、1x1、identity 多分支；推理 fuse 后可以合成一个普通卷积，加速推理。
+
+- YoloBody
+  标准 YOLOv7 结构：
+
+      image
+        -> Backbone
+        -> feat1, feat2, feat3
+        -> SPPCSPC(feat3)
+        -> top-down FPN: P5 upsample 融合 feat2，再 upsample 融合 feat1
+        -> bottom-up PAN: P3 downsample 融合 P4，再 downsample 融合 P5
+        -> RepConv on P3/P4/P5
+        -> 三个 YOLO detection heads
+
+  输出是：
+
+      return [out0, out1, out2]
+
+  其中：
+
+      out0 = P5 检测头输出，低分辨率，大目标
+      out1 = P4 检测头输出，中分辨率
+      out2 = P3 检测头输出，高分辨率，小目标
+
+  每个检测头都是 1x1 Conv，输出通道数：
+
+      len(anchors_mask[i]) * (5 + num_classes)
+
+  这里 5 表示：
+
+      x, y, w, h, objectness
+
+
+3. nets/yolo_light.py
+
+定义轻量版 YOLO：
+
+- LightBackbone
+  结构和 Backbone 类似，但通道数更小。
+
+- YoloLightBody
+  面向单类定位任务，代码中要求 num_classes=1。它把 transition_channels、block_channels、panet_channels 都降到 16，Multi_Concat_Block 重复次数也减少。
+
+轻量版整体结构仍然是：
+
+    LightBackbone -> SPPCSPC -> FPN/PAN -> RepConv -> P3/P4/P5 YOLO heads
+
+它的目的通常是降低参数量和计算量，适合轻量定位任务。
+
+
+二、量子增强版本如何工作
+------------------------
+
+量子增强主要在以下文件中：
+
+- nets/yolov7quantumnewchanel6qubitsanglecoding64output.py
+- nets/yolo_light_quantumchanel.py
+- nets/yolo_light_quantum_minichange.py
+
+这些文件不是把 YOLO 检测头替换成 QNN，而是在 YOLO 的 CNN 特征中插入 QNN 分支。
+
+
+1. TrueQNN6QubitsAngleCoding64Output
+
+这是核心量子模块。它是一个 PyTorch Module，内部通过 TensorCircuit + TensorFlow backend 构造可微量子线路，并用 tc.interfaces.torch_interface 接回 PyTorch。
+
+输入：
+
+    x: shape = [batch, channels, height, width]
+
+处理流程：
+
+    1. 先用 CNN encoder 压缩输入特征：
+
+        Conv2d(channels -> 15, kernel=1)
+        BatchNorm2d(15)
+        SiLU
+        AdaptiveAvgPool2d((2, 2))
+
+    2. 得到 15 * 2 * 2 = 60 个特征：
+
+        encoded = encoder(x).reshape(batch, 60)
+
+    3. 用 tanh 把特征压到稳定范围：
+
+        encoded = tanh(encoded)
+
+    4. 把 60 个特征送入 6-qubit 量子线路。
+
+       为什么是 60？
+       因为量子线路固定为：
+
+           n_qubits = 6
+           upload_rounds = 5
+
+       每一轮每个 qubit 使用两个输入角度：
+
+           RY(input)
+           RZ(input)
+
+       所以每轮需要：
+
+           6 qubits * 2 angles = 12 values
+
+       5 轮共需要：
+
+           12 * 5 = 60 values
+
+    5. 量子线路每一轮结构：
+
+        for round in 5 upload rounds:
+            for each qubit:
+                RY(encoded value)
+                RZ(encoded value)
+
+            for each qubit:
+                RX(trainable angle)
+                RY(trainable angle)
+                RZ(trainable angle)
+
+            for each qubit:
+                CNOT(qubit, (qubit + 1) % 6)
+
+       也就是：
+
+           输入角度编码 -> 可训练旋转门 -> 环形 CNOT 纠缠
+
+    6. 读出量子态：
+
+        state = circuit.state()
+        probabilities = real(state * conj(state))
+
+       6 个 qubit 有 2^6 = 64 个基态，所以输出是 64 维概率。
+
+    7. 通过 Linear(64 -> channels) 映射回通道数，然后 sigmoid：
+
+        gate = sigmoid(readout(probabilities)).reshape(batch, channels, 1, 1)
+
+    8. 用 gate 乘回原特征：
+
+        return x * gate
+
+所以这个 QNN 模块本质上输出一个通道注意力权重，而不是检测框。
+
+可以把它理解为：
+
+    CNN feature -> 量子线路提炼全局通道关系 -> 生成 channel gate -> 重新加权 CNN feature
+
+
+2. QuantumNewChannel6QubitsRepConv
+
+这个模块替换 YOLO 中检测头前的普通 RepConv。
+
+普通 YOLOv7 在 P3/P4/P5 检测头前是：
+
+    P3 -> RepConv -> yolo_head_P3
+    P4 -> RepConv -> yolo_head_P4
+    P5 -> RepConv -> yolo_head_P5
+
+量子版改成：
+
+    P3 -> QuantumNewChannel6QubitsRepConv -> yolo_head_P3
+    P4 -> QuantumNewChannel6QubitsRepConv -> yolo_head_P4
+    P5 -> QuantumNewChannel6QubitsRepConv -> yolo_head_P5
+
+QuantumNewChannel6QubitsRepConv 有三条分支：
+
+    branch_2x2:
+        2x2 Conv + BN
+
+    branch_qnn:
+        TrueQNN6QubitsAngleCoding64Output
+        -> 1x1 Conv + BN
+
+    branch_1x1:
+        1x1 Conv + BN
+
+输出：
+
+    activation(branch_2x2 + branch_qnn + branch_1x1)
+
+因此它的作用是：在检测头之前，把普通卷积分支和量子调制分支融合，让最终 YOLO head 使用增强后的 P3/P4/P5 特征。
+
+
+3. YoloBodyQuantumNewChanel6QubitsAngleCoding64Output
+
+这是标准 YOLOv7 的量子增强版。
+
+和普通 YoloBody 相比，它保留：
+
+    Backbone
+    SPPCSPC
+    FPN/PAN
+    P3/P4/P5 YOLO heads
+
+主要变化是：
+
+    rep_conv_1 = QuantumNewChannel6QubitsRepConv(...)
+    rep_conv_2 = QuantumNewChannel6QubitsRepConv(...)
+    rep_conv_3 = QuantumNewChannel6QubitsRepConv(...)
+
+也就是只在 P3/P4/P5 检测头前加入量子增强分支。
+
+
+4. LightQuantumChannelSPPCSPC
+
+这是轻量版 YOLO 中的量子 SPP 模块。
+
+普通轻量版使用：
+
+    self.sppcspc = SPPCSPC(...)
+
+量子轻量版使用：
+
+    self.sppcspc = LightQuantumChannelSPPCSPC(...)
+
+LightQuantumChannelSPPCSPC 做的事情：
+
+    base = 普通 SPP/CSP 输出
+    output = base + qnn_branch(base)
+
+其中 qnn_branch 是 TrueQNN6QubitsAngleCoding64Output。
+
+所以这里的 QNN 插在最深层语义特征的 SPP 输出之后，用来增强 P5 语义特征，再进入后面的 FPN/PAN。
+
+
+5. YoloLightQuantumChanelBody
+
+这是轻量 YOLO 的量子增强版。
+
+和 YoloLightBody 相比，主要有两处改变：
+
+    1. SPPCSPC 替换成 LightQuantumChannelSPPCSPC
+    2. P3/P4/P5 检测头前的 RepConv 替换成 QuantumNewChannel6QubitsRepConv
+
+完整结构：
+
+    image
+      -> LightBackbone
+      -> feat1, feat2, feat3
+      -> LightQuantumChannelSPPCSPC(feat3)
+      -> FPN/PAN 多尺度融合
+      -> QuantumNewChannel6QubitsRepConv(P3)
+      -> QuantumNewChannel6QubitsRepConv(P4)
+      -> QuantumNewChannel6QubitsRepConv(P5)
+      -> YOLO heads
+      -> [out0, out1, out2]
+
+这个版本强制 num_classes=1，面向单类目标定位。
+
+
+6. YoloLightQuantumMiniChangeBody
+
+文件：
+
+    nets/yolo_light_quantum_minichange.py
+
+它是 YoloLightQuantumChanelBody 的小改版。主要区别是量子读出方式变了。
+
+原始 TrueQNN6QubitsAngleCoding64Output:
+
+    读出 64 个基态概率
+    Linear(64 -> channels)
+
+MiniChange 版本 TrueQNN6QubitsAngleCoding6ZOutput:
+
+    读出 6 个 Pauli-Z expectation
+    MLP(6 -> 16 -> 32 -> 64 -> channels)
+
+也就是从“读完整 64 维状态概率”改成“读 6 个 Z 测量期望值”，再用 MLP 映射回通道数。
+
+它想解决的问题可能是：64 维读出更重，6 个 Z 期望更轻、更接近常见变分量子线路读出方式。
+
+
+三、普通 YOLO 和量子 YOLO 的结构差异
+------------------------------------
+
+普通 YOLOv7：
+
+    image
+      -> Backbone
+      -> feat1, feat2, feat3
+      -> SPPCSPC(feat3)
+      -> FPN top-down
+      -> PAN bottom-up
+      -> RepConv(P3/P4/P5)
+      -> YOLO Head(P3/P4/P5)
+      -> boxes/objectness/classes
+
+量子增强 YOLOv7：
+
+    image
+      -> Backbone
+      -> feat1, feat2, feat3
+      -> SPPCSPC(feat3)
+      -> FPN top-down
+      -> PAN bottom-up
+      -> Quantum RepConv(P3/P4/P5)
+      -> YOLO Head(P3/P4/P5)
+      -> boxes/objectness/classes
+
+轻量量子 YOLO：
+
+    image
+      -> LightBackbone
+      -> feat1, feat2, feat3
+      -> Quantum SPPCSPC(feat3)
+      -> FPN/PAN
+      -> Quantum RepConv(P3/P4/P5)
+      -> YOLO Head(P3/P4/P5)
+      -> boxes/objectness/classes
+
+从输出格式看，量子版没有改变 YOLO 的检测输出协议；训练损失、anchor 解码、NMS 等后处理逻辑理论上可以继续沿用原 YOLO。变化发生在中间特征层。
+
+
+四、为什么要加入量子部分
+------------------------
+
+从代码和项目说明看，加入量子部分的目的有三类：
+
+1. 用 QNN 做特征增强
+
+量子线路使用角度编码、可训练旋转门和 CNOT 纠缠结构。它把 CNN 压缩后的全局特征映射到一个非线性量子特征空间，再读出为通道权重。
+
+这类似一种特殊的 attention：
+
+    普通 channel attention:
+        global pooling -> MLP -> sigmoid gate
+
+    这里的 QNN channel attention:
+        global pooling/CNN encoder -> quantum circuit -> readout -> sigmoid gate
+
+目标是让模型学习更复杂的通道相关性。
+
+
+2. 轻量化后补偿表达能力
+
+项目里有 YoloLightBody 和 YoloLightQuantumChanelBody。轻量版减少了通道数和层数，会降低表达能力。加入 QNN 分支的动机可能是：在较小 CNN 的基础上，用量子线路提供额外的非线性特征变换能力，尝试弥补轻量化带来的精度损失。
+
+
+3. 探索量子-经典混合模型
+
+这个项目显然在探索 quantum + YOLO 的 hybrid neural network：
+
+    CNN 负责局部空间特征和检测结构
+    QNN 负责全局压缩特征的非线性调制
+    YOLO head 仍负责最终目标框和类别预测
+
+这是一种工程上比较可行的混合方式，因为它不需要让量子线路处理整张图片，只处理压缩后的 60 维特征。
+
+
+五、量子模块对 tensor shape 的影响
+----------------------------------
+
+TrueQNN6QubitsAngleCoding64Output 输入输出 shape 一致：
+
+    input:  [B, C, H, W]
+    output: [B, C, H, W]
+
+内部变化：
+
+    [B, C, H, W]
+      -> Conv2d(C -> 15)
+      -> AdaptiveAvgPool2d(2,2)
+      -> [B, 15, 2, 2]
+      -> reshape
+      -> [B, 60]
+      -> QNN
+      -> [B, 64]
+      -> Linear(64 -> C)
+      -> [B, C]
+      -> reshape
+      -> [B, C, 1, 1]
+      -> multiply with original x
+      -> [B, C, H, W]
+
+因此插入 QNN 后不会破坏 YOLO 后续模块的 shape。
+
+QuantumNewChannel6QubitsRepConv 输入输出：
+
+    input:  [B, c1, H, W]
+    output: [B, c2, H, W]
+
+它通过 padding 保持 2x2 Conv 的空间尺寸不变。
+
+
+六、QNAS 目录是什么
+-------------------
+
+qnas/ 是量子线路搜索和接入工具链，不是主检测模型的必经路径。
+
+它的用途：
+
+    search_nas:
+        在线搜索量子线路结构，训练时有结构参数 alpha 和量子参数 theta。
+
+    sample_nas:
+        离线采样大量 CircuitSpec，按结构指标、表达能力、纠缠、硬件成本等排序筛选。
+
+    common:
+        CircuitSpec、GateSpec、读写工具、gate set、registry。
+
+    backends:
+        TensorCircuit 后端用于可微 forward；
+        Qiskit 后端用于线路转换和硬件指标分析。
+
+    metrics:
+        structural、expressibility、entanglement、hardware 等指标。
+
+    qnas/yolo:
+        把量子线路包装成 YOLO 可插入的 QuantumFeatureBlock。
+
+qnas 的统一中间表示是 CircuitSpec。搜索和采样最终都输出 CircuitSpec，然后可以接 TensorCircuit 训练或 Qiskit 分析。
+
+qnas/yolo/blocks.py 中的 QuantumFeatureBlock 做法是：
+
+    feature [B, C, H, W]
+      -> AdaptiveAvgPool2d(1)
+      -> Linear(C -> q_in_dim)
+      -> tanh * pi
+      -> q_layer
+      -> Linear(q_out_dim -> C)
+      -> reshape [B, C, 1, 1]
+      -> feat + residual_scale * q_output
+      -> BN + SiLU
+
+这是另一种更通用的 YOLO feature -> QNN -> YOLO feature 适配器。
+
+
+七、qnn_net 目录是什么
+---------------------
+
+qnn_net/ 不是主 YOLO 检测结构的一部分，而是对论文中 HQNN 思路的轻量复现。
+
+它做的是：
+
+    1. 从 VOC XML 标注读取目标框
+    2. 裁剪目标图像
+    3. 用小型 CNN 编码 crop
+    4. 把特征作为角度输入量子层
+    5. 量子层使用 Ry/Rz、CNOT 纠缠、Z 测量
+    6. 输出分类概率
+    7. 可与 YOLO 分类概率做平均融合
+
+也就是说，qnn_net 的思路更像：
+
+    YOLO 先检测候选框
+    crop 候选框图像
+    HQNN 对 crop 重新分类
+    YOLO 分类概率和 HQNN 分类概率融合
+
+这和 nets/ 里的“量子分支插入 YOLO 特征流”是两条不同路线。
+
+qnn_net/SUMMARY_中文.md 明确说过：
+
+    论文核心不是单纯把 quantum 层插入 YOLO 特征图，而是：
+    1. 先把 YOLOv7 做轻量化改造
+    2. 再训练 HQNN 做图像分类
+    3. 最后把 DL-YOLO 的分类概率和 HQNN 的分类概率平均融合
+
+当前 qnn_net 目录完成的是这个思路的轻量可运行骨架。
+
+
+八、训练和推理时的理解
+----------------------
+
+训练时：
+
+    YOLO 主体参数、普通 CNN 卷积参数、QNN 的 q_angles、QNN readout Linear/MLP 参数都参与反向传播。
+
+量子线路通过 TensorCircuit 的 torch_interface 接到 PyTorch，所以理论上可以端到端求梯度。
+
+推理时：
+
+    image -> YOLO/Q-YOLO forward -> 三尺度 raw outputs -> YOLO decode -> NMS -> final boxes
+
+量子模块在推理时仍要执行 TensorCircuit，因此速度可能比普通 CNN 慢。如果使用 64-state probability readout，计算会比只读 6 个 Z expectation 更重。
+
+
+九、模型输出含义
+----------------
+
+无论普通版还是量子版，最终返回的都是三个尺度的 YOLO raw outputs：
+
+    [out0, out1, out2]
+
+对应：
+
+    out0: P5，大目标，低分辨率
+    out1: P4，中目标，中分辨率
+    out2: P3，小目标，高分辨率
+
+每个输出的 channel 数：
+
+    anchors_per_scale * (5 + num_classes)
+
+如果是单类检测 num_classes=1，且每个尺度 3 个 anchor，则每个尺度输出通道为：
+
+    3 * (5 + 1) = 18
+
+这些 raw outputs 还需要经过 YOLO 解码和 NMS 才能得到最终的定位框。
+
+
+十、用一句更直观的话解释量子加入点
+----------------------------------
+
+原始 YOLO 问题：
+
+    CNN 自己学习所有特征。
+
+这个 Q-Loc 量子版做法：
+
+    CNN 先提取图像特征；
+    取一部分中间特征压缩成 60 个数；
+    这些数作为角度输入 6 个量子比特的线路；
+    量子线路输出一个通道重要性向量；
+    再用这个向量去调制 YOLO 的中间特征；
+    最终仍然由 YOLO head 预测目标框。
+
+所以它是：
+
+    YOLO detector + quantum feature gate
+
+而不是：
+
+    pure quantum object detector
+
+
+十一、如果 ChatGPT 需要复现该模型，最重要的伪代码
+--------------------------------------------------
+
+1. QNN channel gate:
+
+    class QNNGate(nn.Module):
+        def __init__(self, channels):
+            encoder = Conv1x1(channels, 15) + BN + SiLU + AdaptiveAvgPool2d(2,2)
+            q_angles = trainable tensor [5, 6, 3]
+            readout = Linear(64, channels)
+
+        def forward(x):
+            B, C, H, W = x.shape
+            encoded = encoder(x).reshape(B, 60)
+            encoded = tanh(encoded)
+            prob64 = quantum_circuit_6qubit(encoded, q_angles)
+            gate = sigmoid(readout(prob64)).reshape(B, C, 1, 1)
+            return x * gate
+
+2. 6-qubit circuit:
+
+    for each sample:
+        circuit = Circuit(6)
+        for round in range(5):
+            values = encoded[round*12 : (round+1)*12]
+            for q in range(6):
+                RY(q, values[q])
+                RZ(q, values[q+6])
+            for q in range(6):
+                RX(q, q_angles[round, q, 0])
+                RY(q, q_angles[round, q, 1])
+                RZ(q, q_angles[round, q, 2])
+            for q in range(6):
+                CNOT(q, (q+1) % 6)
+        state = circuit.state()
+        return abs(state)^2  # 64 probabilities
+
+3. Quantum RepConv:
+
+    class QuantumRepConv(nn.Module):
+        def forward(x):
+            a = Conv2x2_BN(pad_same(x))
+            b = Conv1x1_BN(QNNGate(x))
+            c = Conv1x1_BN(x)
+            return activation(a + b + c)
+
+4. Light quantum YOLO:
+
+    feat1, feat2, feat3 = LightBackbone(image)
+    p5 = QuantumSPPCSPC(feat3)
+    p4 = concat(conv(feat2), upsample(conv(p5)))
+    p4 = MultiConcat(p4)
+    p3 = concat(conv(feat1), upsample(conv(p4)))
+    p3 = MultiConcat(p3)
+    p4 = MultiConcat(concat(downsample(p3), p4))
+    p5 = MultiConcat(concat(downsample(p4), p5))
+    p3 = QuantumRepConv(p3)
+    p4 = QuantumRepConv(p4)
+    p5 = QuantumRepConv(p5)
+    out_p3 = HeadP3(p3)
+    out_p4 = HeadP4(p4)
+    out_p5 = HeadP5(p5)
+    return [out_p5, out_p4, out_p3]
+
+
+十二、需要特别注意的点
+----------------------
+
+1. 量子模块依赖 tensorcircuit 和 tensorflow。
+   如果环境里没有这些包，量子 forward 会在第一次调用 _build_qml_layer 时失败。
+
+2. QNN 分支输入输出 shape 和原 CNN 特征一致，所以它可以插入 YOLO 中间层，不改变后面的 head 和 loss。
+
+3. 量子版输出格式仍然是 YOLO 输出，不是单独的量子输出。
+
+4. qnas 是线路搜索工具链，qnn_net 是 HQNN 分类融合路线；它们和 nets/ 中的量子 YOLO 插入版相关，但不是完全同一个执行路径。
+
+5. 当前代码里量子增强的工程实现更像实验性 hybrid model。是否真的提升效果，需要用 baseline、light baseline、quantum version 做统一训练和评估对比。
+
+
+十三、可以向 ChatGPT 提问时使用的简短背景
+----------------------------------------
+
+如果要把这个文件当作上下文给 ChatGPT，可以这样概括：
+
+    我有一个 YOLOv7 图像定位模型 Q-Loc。普通版是 YOLOv7 Backbone + SPPCSPC + FPN/PAN + P3/P4/P5 heads。量子版在两个地方加入 QNN：第一，在轻量版 SPPCSPC 输出后做 base + QNN(base)；第二，把 P3/P4/P5 检测头前的 RepConv 替换成 Quantum RepConv。QNN 输入是 [B,C,H,W] 特征，先用 1x1 Conv 降到 15 通道，再 AdaptiveAvgPool 到 2x2，得到 60 个数。60 个数作为 6 qubits、5 upload rounds 的角度编码，每轮使用 RY/RZ 输入编码、RX/RY/RZ 可训练旋转门、环形 CNOT 纠缠。读出 64 个基态概率，通过 Linear(64,C) 和 sigmoid 得到 [B,C,1,1] channel gate，最后输出 x*gate。量子模块不直接预测框，只增强 YOLO 中间特征。最终输出仍是 YOLO 的三个尺度 raw outputs [P5,P4,P3]，每个尺度通道为 anchors*(5+num_classes)。
+

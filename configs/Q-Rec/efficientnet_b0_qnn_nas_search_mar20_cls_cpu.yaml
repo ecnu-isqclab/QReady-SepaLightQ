@@ -1,0 +1,59 @@
+model:
+  module: aircraft_classification.nets.efficientnet_b0_qnn_classifier
+  input_shape: [128, 128]
+  num_classes: 20
+  pretrained: false
+  dropout: 0.2
+  freeze_features: true
+  n_qubits: 8
+  quantum_depth: 3
+  quantum_init_scale: 0.02
+  use_measurement_norm: true
+  quantum_mode: search
+  qnas_backend: torch
+  qnas_entangle_pattern: ring
+  qnas_oneq_ops: [skip, rx, ry, rz]
+  qnas_twoq_ops: [skip, crx, cry, crz]
+  qnas_input_encoding: ry
+  qnas_root: /srv/share/hackathon/QReady-SepaLightQ/models/Q-Rec
+
+weights:
+  path: /srv/share/hackathon/aircraft_classification/logs/efficientnet_b0_qnn_mar20_cls_cpu/2026_05_16_18_55_34/checkpoints/best.pth
+  load_strict: false
+
+data:
+  root: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox
+  classes_path: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_classes.txt
+  train_list: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_crop_train.txt
+  val_list: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_crop_val.txt
+  train_image_dir:
+  val_image_dir:
+  use_weighted_sampler: false
+
+train:
+  experiment_name: efficientnet_b0_qnn_nas_search_mar20_cls_cpu
+  save_dir: /srv/share/hackathon/aircraft_classification/logs
+  epochs: 5
+  batch_size: 8
+  num_workers: 4
+  device: cpu
+  seed: 11
+  fp16: false
+  label_smoothing: 0.05
+
+eval:
+  checkpoint:
+  output_dir:
+  batch_size: 8
+  num_workers: 4
+  device: cpu
+  load_strict: true
+
+optimizer:
+  type: adamw
+  lr: 0.00003
+  weight_decay: 0.0001
+
+scheduler:
+  type: cosine
+  min_lr_ratio: 0.01

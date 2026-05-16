@@ -1,0 +1,90 @@
+model:
+  module: nets.yolo
+  phi: l
+  input_shape:
+  - 640
+  - 640
+  pretrained: false
+  kwargs: {}
+weights:
+  path: model_data/yolov7_weights.pth
+  load_policy: shape_match
+data:
+  classes_path: model_data/mar20_classes.txt
+  anchors_path: model_data/yolo_anchors.txt
+  anchors_mask:
+  - - 6
+    - 7
+    - 8
+  - - 3
+    - 4
+    - 5
+  - - 0
+    - 1
+    - 2
+  train_annotation_path: MAR20_train.txt
+  val_annotation_path: MAR20_val.txt
+  test_annotation_path: MAR20_test.txt
+inference:
+  weights:
+    latest:
+      experiment_name: yolo_mar20_hbb
+      save_dir: logs
+      checkpoint: best_epoch_weights.pth
+    load_policy: strict
+  data:
+    classes_path: model_data/mar20_classes.txt
+  image_path: MAR20devkit/MAR20/JPEGImages/1.jpg
+  output_path: test_outputs/yolo_mar20_hbb_1.jpg
+  confidence: 0.05
+  nms_iou: 0.3
+  letterbox_image: true
+  cuda: true
+  fuse: true
+train:
+  experiment:
+    name: yolo_mar20_hbb
+    save_dir: logs
+  runtime:
+    cuda: true
+    seed: 11
+    distributed: false
+    device_ids:
+    - 0
+    sync_bn: false
+    fp16: true
+    num_workers: 8
+    save_period: 1
+    ema: true
+  checkpoint:
+    save_training_state: true
+    state_period: 1
+  resume:
+    enabled: false
+    state_path: ''
+  schedule:
+    init_epoch: 0
+    freeze_epoch: 0
+    unfreeze_epoch: 20
+    freeze_train: false
+    freeze_batch_size: 8
+    unfreeze_batch_size: 8
+  freeze:
+    target: none
+  optimizer:
+    type: sgd
+    init_lr: 0.01
+    min_lr_ratio: 0.01
+    momentum: 0.937
+    weight_decay: 0.0005
+    lr_decay_type: cos
+  augmentation:
+    mosaic: true
+    mosaic_prob: 0.5
+    mixup: true
+    mixup_prob: 0.5
+    special_aug_ratio: 0.7
+    label_smoothing: 0
+  eval:
+    enabled: true
+    period: 1

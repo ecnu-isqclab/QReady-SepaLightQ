@@ -1,0 +1,15 @@
+q_loc:
+  config: configs/Q-Loc/setting.py
+  weight: weights/Q-Loc/best_epoch_weights.pth
+  classes: configs/Q-Loc/model_data/aircraft_classes.txt
+  anchors: configs/Q-Loc/model_data/yolo_anchors.txt
+
+q_rec:
+  config: configs/Q-Rec/efficientnet_b0_qnn_mar20_cls_cpu_finetune.yaml
+  weight: weights/Q-Rec/best.pth
+
+pipeline:
+  entry_dataset: pipeline/detect_crop_classify.py
+  entry_mar20_txt: pipeline/detect_crop_classify_mar20_txt.py
+  crop_size: 128
+  box_format: x1,y1,x2,y2,class_id

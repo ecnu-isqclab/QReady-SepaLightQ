@@ -1,0 +1,1093 @@
+Q-Rec 模型说明：让没有完整代码的人也能理解这个图像识别模型
+============================================================
+
+目录位置：
+/srv/share/hackathon/QReady-SepaLightQ/models/Q-Rec
+
+一句话总结
+----------
+Q-Rec 是一个图像识别/分类模型，不是目标检测模型。它的主体是 torchvision 的 EfficientNet-B0，保留经典 CNN 特征提取器，只把最后的线性分类器替换成“经典特征投影 + 量子变分线路 + 线性分类器”的混合量子分类头。
+
+核心结构可以写成：
+
+    image
+      -> EfficientNet-B0 classical feature extractor
+      -> pooled 1280-d feature
+      -> Linear(1280 -> n_qubits)
+      -> tanh * pi angle encoding
+      -> quantum circuit
+      -> Z expectation measurements
+      -> optional LayerNorm
+      -> Linear(measurements -> num_classes)
+      -> class logits
+
+也就是说，Q-Rec 不是把整张图片送进量子线路，而是先用 EfficientNet-B0 提取高层视觉特征，再把 1280 维特征压缩到少量 qubit 角度输入。这样量子仿真只发生在很小的特征维度上。
+
+
+一、主要文件和职责
+------------------
+
+Q-Rec 主模型代码集中在：
+
+    efficientnet_b0_qnn_classifier.py
+
+目录里还有：
+
+    qnas/
+
+qnas 是量子线路搜索、采样、保存、加载、TensorCircuit/Qiskit 后端工具链。它和 Q-Loc 里的 qnas 很相似，虽然子目录名里有 yolo，但在 Q-Rec 中也被复用来构建 search/sampled 量子分类头。
+
+
+二、主模型 EfficientNetB0QNNClassifier
+--------------------------------------
+
+类名：
+
+    EfficientNetB0QNNClassifier
+
+文件：
+
+    efficientnet_b0_qnn_classifier.py
+
+导出变量：
+
+    MODEL_CLASS = EfficientNetB0QNNClassifier
+
+模型用途：
+
+    输入图像，输出分类 logits，shape 为 [batch_size, num_classes]。
+
+默认参数：
+
+    num_classes = 20
+    pretrained = True
+    dropout = 0.2
+    freeze_features = False
+    input_shape = (128, 128)
+    n_qubits = 8
+    quantum_depth = 3
+    quantum_init_scale = 0.02
+    use_measurement_norm = True
+    quantum_mode = "fixed"
+    qnas_backend = "torch"
+    qnas_tc_backend = "pytorch"
+    qnas_entangle_pattern = "ring"
+    qnas_oneq_ops = ("skip", "rx", "ry", "rz")
+    qnas_twoq_ops = ("skip", "crx", "cry", "crz")
+    qnas_input_encoding = "ry"
+    circuit_path = None
+    qnas_root = None
+
+初始化流程：
+
+    1. 检查 num_classes > 0。
+    2. 保存 num_classes、input_shape、n_qubits、quantum_depth。
+    3. 如果 pretrained=True，加载 EfficientNet_B0_Weights.IMAGENET1K_V1。
+    4. 创建 torchvision.models.efficientnet_b0(weights=..., dropout=dropout)。
+    5. 读取原始 classifier[1] 的输入维度，通常是 1280。
+    6. 把 EfficientNet-B0 的最后分类层替换成 HybridQuantumClassifierHead。
+    7. 如果 freeze_features=True，则冻结 EfficientNet 特征提取层。
+
+forward:
+
+    def forward(self, x):
+        return self.backbone(x)
+
+也就是说，forward 直接走改造后的 torchvision EfficientNet-B0。由于 classifier[1] 已经被替换成量子分类头，所以输出就是量子头产生的分类 logits。
+
+
+三、普通 EfficientNet-B0 和 Q-Rec 的差异
+----------------------------------------
+
+普通 torchvision EfficientNet-B0 的分类尾部大致是：
+
+    features
+      -> avgpool
+      -> flatten
+      -> classifier:
+           Dropout
+           Linear(1280 -> num_classes)
+
+Q-Rec 改成：
+
+    features
+      -> avgpool
+      -> flatten
+      -> classifier:
+           Dropout
+           HybridQuantumClassifierHead(
+               Linear(1280 -> quantum_inputs)
+               QNN
+               optional LayerNorm
+               Linear(quantum_outputs -> num_classes)
+           )
+
+注意：EfficientNet-B0 的 features、avgpool、dropout 仍然是 torchvision 原实现。Q-Rec 只替换 classifier[1]。
+
+
+四、HybridQuantumClassifierHead
+-------------------------------
+
+类名：
+
+    HybridQuantumClassifierHead
+
+职责：
+
+    把 EfficientNet 的高维 pooled feature 转成量子线路输入，执行量子线路，再把量子测量结果映射成类别 logits。
+
+输入：
+
+    features: [B, in_features]
+
+通常：
+
+    in_features = 1280
+
+核心层：
+
+    self.input_projection = nn.Linear(in_features, quantum_inputs)
+    self.quantum = 量子层
+    self.measurement_norm = LayerNorm(quantum_outputs) 或 Identity()
+    self.classifier = nn.Linear(quantum_outputs, num_classes)
+
+forward:
+
+    angles = tanh(input_projection(features)) * pi
+    measurements = quantum(angles)
+    measurements = measurement_norm(measurements)
+    logits = classifier(measurements)
+
+所以 Q-Rec 的量子头本质上是：
+
+    1280-d classical feature
+      -> low-dimensional angle vector
+      -> variational quantum circuit
+      -> Z expectation vector
+      -> linear classifier
+
+使用 tanh * pi 的原因：
+
+    input_projection 的输出可能是任意实数；
+    量子旋转门角度通常希望落在稳定范围；
+    tanh 把值压到 [-1, 1]；
+    乘 pi 后得到 [-pi, pi] 的角度。
+
+
+五、量子头的三种模式 quantum_mode
+----------------------------------
+
+HybridQuantumClassifierHead 支持三种量子模式：
+
+    quantum_mode = "fixed"
+    quantum_mode = "search"
+    quantum_mode = "sampled"
+
+
+1. fixed 模式
+
+fixed 是默认模式。
+
+结构：
+
+    Linear(1280 -> n_qubits)
+      -> TensorCircuitAngleQNN(n_qubits, quantum_depth)
+      -> LayerNorm(n_qubits)
+      -> Linear(n_qubits -> num_classes)
+
+输入输出维度：
+
+    quantum_inputs = n_qubits
+    quantum_outputs = n_qubits
+
+fixed 模式使用固定手写线路结构：
+
+    1. 对每个 qubit 做 RY(input_angle)
+    2. 重复 quantum_depth 层：
+        a. 线性/环形 CNOT 纠缠
+        b. 每个 qubit 做 RX/RY/RZ 可训练旋转
+    3. 对每个 qubit 测量 Pauli-Z expectation
+
+
+2. search 模式
+
+search 模式使用 qnas/search_nas 中的可搜索量子层。
+
+构建函数：
+
+    _build_qnas_search_layer(...)
+
+它创建 SearchSpaceSpec：
+
+    n_qubits = n_qubits
+    n_layers = quantum_depth
+    oneq_ops = qnas_oneq_ops
+    twoq_ops = qnas_twoq_ops
+    entangle_pattern = qnas_entangle_pattern
+    input_encoding = qnas_input_encoding
+
+默认搜索空间：
+
+    oneq_ops = ("skip", "rx", "ry", "rz")
+    twoq_ops = ("skip", "crx", "cry", "crz")
+    entangle_pattern = "ring"
+    input_encoding = "ry"
+
+search 模式有两种后端：
+
+    qnas_backend = "torch"
+        使用 SearchableQuantumLayer，纯 PyTorch statevector 小规模仿真。
+
+    qnas_backend = "tensorcircuit"
+        使用 TensorCircuitSearchableQuantumLayer，由 TensorCircuit 执行量子态演化。
+
+search 模式的特点：
+
+    - 量子线路结构不是固定的。
+    - 每层每个 qubit 的单比特门由 alpha_1q 决定。
+    - 每层每条纠缠边的双比特门由 alpha_2q 决定。
+    - theta_1q/theta_2q 是可训练量子旋转参数。
+    - forward 使用 softmax(alpha) 形成软结构。
+    - export_qnas_circuit_spec() 可以把当前 argmax 结构导出成 CircuitSpec。
+
+
+3. sampled 模式
+
+sampled 模式使用已经搜索/采样好的固定 CircuitSpec json。
+
+要求：
+
+    circuit_path 必须提供。
+
+构建方式：
+
+    self.quantum = SampledQuantumLayer.from_path(circuit_path)
+
+输入输出维度来自 CircuitSpec：
+
+    quantum_inputs = spec.n_inputs
+    quantum_outputs = len(spec.measured_qubits)
+
+sampled 模式的用途：
+
+    先用 qnas 离线搜索或采样筛选出一个量子线路；
+    保存为 CircuitSpec json；
+    Q-Rec 读取这个 json；
+    用固定线路结构作为分类头里的 QNN。
+
+
+六、fixed 模式量子线路 TensorCircuitAngleQNN
+--------------------------------------------
+
+类名：
+
+    TensorCircuitAngleQNN
+
+职责：
+
+    创建固定结构的角度编码变分量子线路。
+
+输入：
+
+    inputs: [B, n_qubits]
+
+输出：
+
+    measurements: [B, n_qubits]
+
+默认：
+
+    n_qubits = 8
+    quantum_depth = 3
+
+构建内部量子层：
+
+    _build_angle_qnn_layer(n_qubits, quantum_depth)
+
+它使用 TensorCircuit：
+
+    tc.set_backend("pytorch")
+    tc.TorchLayer(qnn_circuit, weights_shape=[quantum_depth, n_qubits, 3])
+
+量子权重 shape：
+
+    [quantum_depth, n_qubits, 3]
+
+每个 qubit 每层有三个可训练角度：
+
+    RX weight
+    RY weight
+    RZ weight
+
+初始化：
+
+    所有量子参数 uniform(-quantum_init_scale, quantum_init_scale)
+
+默认 quantum_init_scale = 0.02。
+
+
+七、fixed 模式 qnn_circuit 细节
+-------------------------------
+
+伪代码：
+
+    circuit = tc.Circuit(n_qubits)
+
+    # angle encoding
+    for q in range(n_qubits):
+        circuit.ry(q, theta=inputs[q])
+
+    for layer in range(quantum_depth):
+        # entanglement
+        for q in range(n_qubits - 1):
+            circuit.cnot(q, q + 1)
+        if n_qubits > 2:
+            circuit.cnot(n_qubits - 1, 0)
+
+        # trainable rotations
+        for q in range(n_qubits):
+            circuit.rx(q, theta=weights[layer, q, 0])
+            circuit.ry(q, theta=weights[layer, q, 1])
+            circuit.rz(q, theta=weights[layer, q, 2])
+
+    measurements = []
+    for q in range(n_qubits):
+        measurements.append(circuit.expectation_ps(z=[q]))
+
+    return real(stack(measurements))
+
+解释：
+
+    1. 每个输入维度对应一个 qubit 的 RY 角度。
+    2. 每一层先做 CNOT 纠缠。
+    3. 如果 n_qubits > 2，最后一个 qubit 还会 CNOT 到第 0 个 qubit，形成 ring。
+    4. 然后每个 qubit 做 RX/RY/RZ 三个可训练旋转。
+    5. 最后测量每个 qubit 的 Z 期望。
+
+输出不是 2^n 个概率，而是 n_qubits 个 Z expectation。
+
+Z expectation 范围通常在 [-1, 1]。
+
+
+八、CUDA 相关处理
+-----------------
+
+TensorCircuitAngleQNN.forward 中有一个特殊处理：
+
+    inputs = inputs.float()
+
+如果不是 CUDA，或 torch 没有 set_default_device：
+
+    return self.q_layer(inputs)
+
+如果是 CUDA：
+
+    previous_device = torch.get_default_device()
+    torch.set_default_device(inputs.device)
+    output = self.q_layer(inputs)
+    torch.set_default_device(previous_device)
+
+原因：
+
+    TensorCircuit 的 PyTorch backend 可能会在默认 torch device 上创建门矩阵常量。
+    如果输入在 CUDA 上，而门矩阵在 CPU 上，就会出现 device mismatch。
+    因此 forward 临时把默认 device 设置成输入所在设备。
+
+
+九、freeze_features / unfreeze_features
+---------------------------------------
+
+EfficientNetB0QNNClassifier 提供两个方法：
+
+    freeze_features()
+    unfreeze_features()
+
+freeze_features:
+
+    for parameter in self.backbone.features.parameters():
+        parameter.requires_grad = False
+
+作用：
+
+    冻结 EfficientNet-B0 的 CNN 特征提取部分，只训练量子分类头和后续分类器。
+
+unfreeze_features:
+
+    for parameter in self.backbone.features.parameters():
+        parameter.requires_grad = True
+
+作用：
+
+    解冻 EfficientNet-B0 特征提取部分，端到端微调 CNN + QNN。
+
+注意：
+
+    freeze_features 只冻结 self.backbone.features，不冻结 classifier。
+    因此 HybridQuantumClassifierHead 仍然可训练。
+
+
+十、export_qnas_circuit_spec
+----------------------------
+
+EfficientNetB0QNNClassifier 有方法：
+
+    export_qnas_circuit_spec(name="efficientnet_b0_qnn_search")
+
+它从：
+
+    self.backbone.classifier[1].quantum
+
+取出量子层。如果当前 quantum_mode="search"，并且量子层有 export_circuit_spec 方法，则导出 CircuitSpec。
+
+如果当前不是 search 模式，会抛出 RuntimeError：
+
+    QNAS export is only available when quantum_mode='search'.
+
+用途：
+
+    1. 用 search 模式训练，让 alpha 学出线路结构。
+    2. 导出 argmax 后的离散 CircuitSpec。
+    3. 保存成 json。
+    4. 后续用 sampled 模式加载这个固定线路。
+
+
+十一、qnas/search_nas 搜索量子层
+--------------------------------
+
+qnas/search_nas/search_space.py:
+
+    SearchSpaceSpec
+
+字段：
+
+    n_qubits
+    n_layers
+    oneq_ops
+    twoq_ops
+    entangle_pattern
+    input_encoding
+
+默认：
+
+    n_qubits = 4
+    n_layers = 3
+    oneq_ops = ("rx", "ry", "rz")
+    twoq_ops = ("crx", "cry", "crz")
+    entangle_pattern = "linear"
+    input_encoding = "ry"
+
+但 Q-Rec 调用它时默认覆盖为：
+
+    oneq_ops = ("skip", "rx", "ry", "rz")
+    twoq_ops = ("skip", "crx", "cry", "crz")
+    entangle_pattern = "ring"
+
+twoq_edges:
+
+    if entangle_pattern == "linear":
+        [(0,1), (1,2), ..., (n-2,n-1)]
+
+    if entangle_pattern == "ring":
+        linear edges + [(n-1,0)] when n_qubits > 2
+
+
+十二、SearchableQuantumLayer
+----------------------------
+
+文件：
+
+    qnas/search_nas/searchable_layer.py
+
+职责：
+
+    维护可搜索量子线路的结构参数 alpha 和量子权重 theta，并提供小规模 PyTorch statevector forward。
+
+参数：
+
+    alpha_1q: [n_layers, n_qubits, len(oneq_ops)]
+    alpha_2q: [n_layers, n_edges, len(twoq_ops)]
+    theta_1q: [n_layers, n_qubits]
+    theta_2q: [n_layers, n_edges]
+
+alpha:
+
+    结构 logits，用 softmax 得到每种候选门的权重。
+
+theta:
+
+    量子旋转角参数。
+
+forward 输入：
+
+    x: [B, n_qubits]
+
+forward 流程：
+
+    1. 初始化 state = |0...0>，shape [B, 2^n_qubits]，complex64。
+    2. 对每个 qubit 应用 input_encoding，比如 RY(x[:, q])。
+    3. 计算:
+
+        prob_1q = softmax(alpha_1q, dim=-1)
+        prob_2q = softmax(alpha_2q, dim=-1)
+
+    4. 对每一层：
+        a. 对每个 qubit，每个候选单比特门 op：
+            如果 op 不是 skip/identity：
+                theta = prob_1q * theta_1q
+                应用对应旋转矩阵
+
+        b. 对每条 twoq edge，每个候选双比特门 op：
+            如果 op 不是 skip/identity：
+                theta = prob_2q * theta_2q
+                如果 op 是 crx/cry/crz，应用受控旋转
+                如果 op 是 cx/cz，应用受控门
+
+    5. 输出每个 qubit 的 Z expectation：
+
+        plus_prob - minus_prob
+
+输出：
+
+    [B, n_qubits]
+
+它还提供：
+
+    arch_parameters() -> [alpha_1q, alpha_2q]
+    quantum_weight_parameters() -> [theta_1q, theta_2q]
+    export_circuit_spec()
+
+
+十三、export_circuit_spec 如何离散化搜索结果
+--------------------------------------------
+
+SearchableQuantumLayer.export_circuit_spec(name) 做的事情：
+
+    1. 先把输入编码门加入 gates：
+
+        GateSpec(input_encoding, [qubit], source="input", index=qubit)
+
+    2. 对每层每个 qubit：
+
+        op = argmax(alpha_1q[layer, qubit])
+        如果 op 不是 skip/identity：
+            加入 GateSpec(op, [qubit], source="weight", index=weight_index)
+            weight_index += op 所需参数数
+
+    3. 对每层每条 twoq edge：
+
+        op = argmax(alpha_2q[layer, edge])
+        如果 op 不是 skip/identity：
+            加入 GateSpec(op, edge, source="weight", index=weight_index)
+            weight_index += op 所需参数数
+
+    4. 生成 CircuitSpec：
+
+        name = name
+        n_qubits = space.n_qubits
+        n_inputs = space.n_qubits
+        n_weights = weight_index
+        measured_qubits = [0, 1, ..., n_qubits-1]
+        gates = gates
+        meta = {"source": "search_nas", "search_space": space.__dict__}
+
+这就是 search -> sampled 的桥梁。
+
+
+十四、TensorCircuitSearchableQuantumLayer
+-----------------------------------------
+
+文件：
+
+    qnas/search_nas/tensorcircuit_search_layer.py
+
+它继承 SearchableQuantumLayer，但用 TensorCircuit 执行 forward。
+
+初始化：
+
+    self.tc_backend = tc_backend
+    self.tc_layer = self._build_tensorcircuit_layer()
+
+支持 tc_backend：
+
+    "pytorch"
+    "tensorflow"
+
+TensorCircuit search 版本目前支持的 twoq_ops：
+
+    crx
+    cry
+    crz
+    skip
+    identity
+
+如果包含其他双比特门，会抛 NotImplementedError。
+
+qml 逻辑：
+
+    circuit = tc.Circuit(n_qubits)
+
+    for q in qubits:
+        getattr(circuit, input_encoding)(q, theta=sample[q])
+
+    for layer in layers:
+        for q in qubits:
+            for op in oneq_ops:
+                if op not skip:
+                    theta = prob_1q[layer,q,op] * theta_1q[layer,q]
+                    circuit.op(q, theta=theta)
+
+        for edge in twoq_edges:
+            for op in twoq_ops:
+                if op not skip:
+                    theta = prob_2q[layer,edge,op] * theta_2q[layer,edge]
+                    circuit.op(control, target, theta=theta)
+
+    outputs = Z expectations for all qubits
+
+如果 tc_backend == "pytorch":
+
+    返回 backend.vmap(qml)
+
+否则：
+
+    返回 tc.interfaces.torch_interface(qml_vmap, jit=True)
+
+
+十五、sampled 模式和 CircuitSpec
+--------------------------------
+
+CircuitSpec 定义在：
+
+    qnas/common/schema.py
+
+GateSpec:
+
+    op: str
+    wires: list[int]
+    source: "input" | "weight" | "none"
+    index: int | None
+
+含义：
+
+    op:
+        门名称，如 rx, ry, rz, cx, cz, crx, cry, crz 等。
+
+    wires:
+        作用在哪些 qubit 上。
+
+    source:
+        "input" 表示该门角度来自输入向量。
+        "weight" 表示该门角度来自可训练权重。
+        "none" 表示该门没有角度参数。
+
+    index:
+        在 inputs 或 weights 中的索引。
+
+CircuitSpec:
+
+    name
+    n_qubits
+    n_inputs
+    n_weights
+    measured_qubits
+    gates
+    meta
+
+validate 会检查：
+
+    n_qubits > 0
+    n_inputs/n_weights 非负
+    measured_qubits 在范围内
+    gate wires 在范围内
+    input/weight index 不越界
+
+sampled 模式使用：
+
+    qnas/yolo/layers.py 中的 SampledQuantumLayer
+
+虽然路径叫 yolo/layers.py，但在 Q-Rec 中它只是一个通用 CircuitSpec -> PyTorch Module 适配器。
+
+SampledQuantumLayer:
+
+    self.spec = spec
+    self.num_inputs = spec.n_inputs
+    self.num_outputs = len(spec.measured_qubits)
+    self.weights = nn.Parameter(randn(spec.n_weights) * 0.02)
+    self._runner = None
+
+forward:
+
+    runner = expectation_fn(spec)
+    outputs = [runner(sample, self.weights) for sample in x]
+    return stack(outputs)
+
+所以 sampled 模式每个输入样本会运行一次固定 CircuitSpec，然后返回 measured_qubits 的 Z expectation。
+
+
+十六、TensorCircuit backend for CircuitSpec
+------------------------------------------
+
+文件：
+
+    qnas/backends/tensorcircuit_backend.py
+
+作用：
+
+    把 CircuitSpec 执行成 TensorCircuit 线路。
+
+load_tensorcircuit:
+
+    import tensorcircuit as tc
+    import tensorflow
+    backend = tc.set_backend("tensorflow")
+
+注意 sampled 的 expectation_fn 默认依赖 tensorcircuit + tensorflow。
+
+resolve_gate_value:
+
+    if gate.source == "input":
+        return inputs[gate.index]
+    if gate.source == "weight":
+        return weights[gate.index]
+    return None
+
+apply_gate 支持：
+
+    skip / identity
+    rx / ry / rz
+    h / x / sx
+    cx / cnot
+    cz
+    crx / cry / crz
+    rxx / ryy / rzz
+
+expectation_fn(spec):
+
+    创建 run(inputs, weights)
+    run 内部按 spec.gates 依次 apply_gate
+    对 spec.measured_qubits 测量 Z expectation
+    返回 stack(outputs)
+
+state_fn(spec):
+
+    返回完整量子态 circuit.state()
+
+
+十七、qnas/sample_nas 和 metrics
+-------------------------------
+
+qnas/sample_nas 用于离线采样和筛选量子线路。
+
+常见流程：
+
+    1. sample_circuit_pool 生成大量 CircuitSpec。
+    2. deduplicate_circuits 去重。
+    3. evaluate_circuit 计算指标。
+    4. rank_circuits 按分数排序。
+    5. save_rank_results 保存 top-k。
+    6. Q-Rec 使用 quantum_mode="sampled" 加载其中一个 circuit_path。
+
+metrics 包括：
+
+    structural:
+        统计 n_qubits、n_gates、n_1q_gates、n_2q_gates、depth 等结构指标。
+
+    hardware:
+        根据双比特门、深度、硬件连接等估算硬件成本。
+
+    expressibility:
+        表达能力指标占位，需要 TensorCircuit 实现。
+
+    entanglement:
+        纠缠能力指标占位，需要 TensorCircuit 实现。
+
+    score:
+        把多个指标按权重合成一个 score。
+
+
+十八、Q-Rec 的训练理解
+----------------------
+
+Q-Rec 训练时主要参数包括：
+
+1. EfficientNet-B0 features 参数
+
+    如果 freeze_features=False，参与训练。
+    如果 freeze_features=True，不参与训练。
+
+2. input_projection
+
+    Linear(1280 -> quantum_inputs)，参与训练。
+
+3. quantum 参数
+
+    fixed 模式：
+        TensorCircuit TorchLayer 里的 weights，shape [depth, n_qubits, 3]。
+
+    search 模式：
+        alpha_1q、alpha_2q、theta_1q、theta_2q。
+
+    sampled 模式：
+        SampledQuantumLayer.weights，shape [spec.n_weights]。
+
+4. measurement_norm
+
+    如果 use_measurement_norm=True，LayerNorm 参数参与训练。
+
+5. classifier
+
+    Linear(quantum_outputs -> num_classes)，参与训练。
+
+损失通常是分类任务的 CrossEntropyLoss：
+
+    logits = model(images)
+    loss = cross_entropy(logits, labels)
+
+输出 logits，不包含 softmax。评估或推理时可以：
+
+    probs = softmax(logits, dim=-1)
+    pred = argmax(probs, dim=-1)
+
+
+十九、Q-Rec 的推理流程
+----------------------
+
+推理时：
+
+    image batch
+      -> EfficientNet-B0 features
+      -> avgpool + flatten
+      -> dropout/classifier path
+      -> input_projection
+      -> angle encoding
+      -> quantum layer
+      -> measurement_norm
+      -> final Linear
+      -> logits [B, num_classes]
+
+它不会输出边界框，不做 NMS，不做 YOLO decode。它是识别分类模型。
+
+
+二十、为什么要这样加入量子部分
+------------------------------
+
+这个设计的动机很清楚：
+
+1. 保留成熟 CNN 的图像特征提取能力
+
+EfficientNet-B0 已经是成熟的轻量 CNN 图像分类 backbone。如果把整张图片直接丢给量子线路，维度过高，不现实。Q-Rec 让 CNN 负责图像空间特征提取。
+
+
+2. 把量子计算限制在低维高语义特征上
+
+EfficientNet 的最后 pooled feature 是高层语义向量。Q-Rec 先用 Linear 把它压到 n_qubits 维，例如 8 维，再作为量子角度。这让量子线路规模可控。
+
+
+3. 用变分量子线路作为非线性分类头
+
+原始 EfficientNet 的最后分类器只是 Linear(1280 -> classes)。Q-Rec 改成：
+
+    Linear(1280 -> n_qubits)
+    VQC
+    Linear(n_qubits -> classes)
+
+相当于在分类头中加入一个量子非线性映射，希望捕获不同类别之间更复杂的高层特征关系。
+
+
+4. 支持量子线路结构搜索
+
+通过 qnas，Q-Rec 不仅能用固定线路，还能：
+
+    search: 训练时搜索门结构
+    sampled: 加载离线筛选的线路
+
+这使它可以比较：
+
+    fixed 手写线路
+    search 学出来的线路
+    sampled 离线筛选线路
+
+
+二十一、和 Q-Loc 的区别
+-----------------------
+
+Q-Loc:
+
+    目标检测/定位模型。
+    主体是 YOLOv7。
+    量子模块插在中间特征图中。
+    输出是 P3/P4/P5 三尺度 YOLO raw outputs。
+    最终得到 bounding boxes。
+
+Q-Rec:
+
+    图像识别/分类模型。
+    主体是 EfficientNet-B0。
+    量子模块替换最后分类头的一部分。
+    输出是 [B, num_classes] logits。
+    最终得到类别。
+
+Q-Loc 的量子模块更像 feature gate。
+Q-Rec 的量子模块更像 classification head。
+
+
+二十二、重要 shape 总结
+-----------------------
+
+输入图像：
+
+    x: [B, 3, H, W]
+
+EfficientNet-B0 特征：
+
+    pooled feature: [B, 1280]
+
+HybridQuantumClassifierHead:
+
+    input_projection:
+        [B, 1280] -> [B, quantum_inputs]
+
+fixed/search 默认：
+
+    quantum_inputs = n_qubits
+    quantum_outputs = n_qubits
+
+默认 n_qubits=8：
+
+    [B, 1280]
+      -> [B, 8]
+      -> QNN
+      -> [B, 8]
+      -> Linear(8 -> num_classes)
+      -> [B, num_classes]
+
+sampled 模式：
+
+    quantum_inputs = spec.n_inputs
+    quantum_outputs = len(spec.measured_qubits)
+
+最终输出：
+
+    logits: [B, num_classes]
+
+
+二十三、最重要的伪代码
+----------------------
+
+1. 主模型：
+
+    class EfficientNetB0QNNClassifier(nn.Module):
+        def __init__(num_classes=20, pretrained=True, n_qubits=8, quantum_depth=3):
+            backbone = torchvision.models.efficientnet_b0(pretrained)
+            in_features = backbone.classifier[1].in_features  # usually 1280
+            backbone.classifier[1] = HybridQuantumClassifierHead(
+                in_features=1280,
+                num_classes=num_classes,
+                n_qubits=n_qubits,
+                quantum_depth=quantum_depth,
+            )
+
+        def forward(x):
+            return backbone(x)
+
+
+2. 混合量子分类头：
+
+    class HybridQuantumClassifierHead(nn.Module):
+        def __init__(in_features, num_classes, n_qubits):
+            input_projection = Linear(in_features, n_qubits)
+            quantum = TensorCircuitAngleQNN(n_qubits)
+            measurement_norm = LayerNorm(n_qubits)
+            classifier = Linear(n_qubits, num_classes)
+
+        def forward(features):
+            angles = tanh(input_projection(features)) * pi
+            measurements = quantum(angles)
+            measurements = measurement_norm(measurements)
+            return classifier(measurements)
+
+
+3. fixed 量子线路：
+
+    def qnn_circuit(inputs, weights):
+        circuit = Circuit(n_qubits)
+
+        for q in range(n_qubits):
+            circuit.ry(q, theta=inputs[q])
+
+        for layer in range(quantum_depth):
+            for q in range(n_qubits - 1):
+                circuit.cnot(q, q + 1)
+            if n_qubits > 2:
+                circuit.cnot(n_qubits - 1, 0)
+
+            for q in range(n_qubits):
+                circuit.rx(q, theta=weights[layer, q, 0])
+                circuit.ry(q, theta=weights[layer, q, 1])
+                circuit.rz(q, theta=weights[layer, q, 2])
+
+        return [expectation_Z(q) for q in range(n_qubits)]
+
+
+4. search 量子线路：
+
+    input angles -> input_encoding gates
+    for each layer:
+        for each qubit:
+            softmax(alpha_1q) chooses/mixes skip/rx/ry/rz
+        for each edge:
+            softmax(alpha_2q) chooses/mixes skip/crx/cry/crz
+    output Z expectations
+
+
+5. sampled 量子线路：
+
+    spec = load CircuitSpec json
+    for gate in spec.gates:
+        value = input[index] or weight[index] or None
+        apply gate to TensorCircuit
+    return Z expectations on spec.measured_qubits
+
+
+二十四、需要特别注意的点
+------------------------
+
+1. Q-Rec 是分类模型，不是检测模型。
+   它输出类别 logits，不输出 bounding boxes。
+
+2. 量子线路不处理原始图像。
+   它只处理 EfficientNet-B0 提取出的 1280 维 pooled feature 的低维投影。
+
+3. fixed 模式依赖 tensorcircuit，并使用 PyTorch backend：
+
+       tc.set_backend("pytorch")
+
+4. sampled 模式的 CircuitSpec backend 当前使用 tensorflow backend：
+
+       tc.set_backend("tensorflow")
+
+   因此 sampled 模式通常需要 tensorcircuit + tensorflow。
+
+5. qnas 里的 yolo/ 路径名是历史命名。
+   在 Q-Rec 里，qnas/yolo/layers.py 的 SampledQuantumLayer 被当作通用量子层使用。
+
+6. use_measurement_norm=True 时，QNN 输出的 Z expectations 会先过 LayerNorm 再分类。
+
+7. pretrained=True 会尝试使用 torchvision EfficientNet-B0 ImageNet 权重。
+   如果环境无网络且本地没有权重缓存，加载可能失败。
+
+8. input_shape 参数只为了配置兼容被保存，主 forward 不直接使用它改变 EfficientNet 结构。
+
+9. quantum_depth 控制 fixed/search 线路层数。
+   n_qubits 控制输入投影维度、量子线路大小和测量输出维度。
+
+10. QNAS search 导出的 CircuitSpec 可以用于 sampled 模式，从而把可搜索软结构变成固定离散线路。
+
+
+二十五、可以向 ChatGPT 提问时使用的简短背景
+------------------------------------------
+
+如果要把这个文件当作上下文给 ChatGPT，可以这样概括：
+
+    我有一个 Q-Rec 图像识别模型。它是 EfficientNet-B0 + 量子分类头。EfficientNet-B0 保留 torchvision 原始 features、avgpool 和 dropout，只把 classifier[1] 从 Linear(1280,num_classes) 替换为 HybridQuantumClassifierHead。该 head 先用 Linear(1280, quantum_inputs) 把 pooled feature 投影到低维角度，经过 tanh*pi 得到量子旋转角，再送入量子层。默认 fixed 量子层是 TensorCircuitAngleQNN：对每个 qubit 用 RY(input) 编码，然后重复 quantum_depth 层，每层先做 ring CNOT 纠缠，再对每个 qubit 做 RX/RY/RZ 可训练旋转，最后测量每个 qubit 的 Pauli-Z expectation，得到 [B,n_qubits]。测量结果可选 LayerNorm，再 Linear(n_qubits,num_classes) 输出 logits。模型支持 quantum_mode=fixed/search/sampled：fixed 是手写线路，search 使用 qnas 的 SearchableQuantumLayer 或 TensorCircuitSearchableQuantumLayer 学习门结构，sampled 从 CircuitSpec json 加载固定线路。最终输出是 [B,num_classes] 分类 logits，不是目标框。
+

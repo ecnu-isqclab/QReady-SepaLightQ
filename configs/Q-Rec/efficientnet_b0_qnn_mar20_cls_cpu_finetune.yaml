@@ -1,0 +1,52 @@
+model:
+  module: aircraft_classification.nets.efficientnet_b0_qnn_classifier
+  input_shape: [128, 128]
+  num_classes: 20
+  pretrained: false
+  dropout: 0.2
+  freeze_features: false
+  n_qubits: 8
+  quantum_depth: 3
+  quantum_init_scale: 0.02
+  use_measurement_norm: true
+
+weights:
+  path: /srv/share/hackathon/QReady-SepaLightQ/weights/Q-Rec/best.pth
+  load_strict: true
+
+data:
+  root: /srv/share/hackathon/QReady-SepaLightQ/configs/Q-Loc
+  classes_path: /srv/share/hackathon/yolov7-pytorch-master/model_data/mar20_classes.txt
+  train_list:
+  val_list:
+  train_image_dir:
+  val_image_dir:
+  use_weighted_sampler: false
+
+train:
+  experiment_name: efficientnet_b0_qnn_mar20_cls_cpu_finetune
+  save_dir: /srv/share/hackathon/QReady-SepaLightQ/logs/Q-Rec
+  epochs: 15
+  batch_size: 8
+  num_workers: 4
+  device: cpu
+  seed: 11
+  fp16: false
+  label_smoothing: 0.05
+
+eval:
+  checkpoint: /srv/share/hackathon/QReady-SepaLightQ/weights/Q-Rec/best.pth
+  output_dir: /srv/share/hackathon/QReady-SepaLightQ/results/Q-Rec/eval_best
+  batch_size: 8
+  num_workers: 4
+  device: cpu
+  load_strict: true
+
+optimizer:
+  type: adamw
+  lr: 0.00003
+  weight_decay: 0.0001
+
+scheduler:
+  type: cosine
+  min_lr_ratio: 0.01

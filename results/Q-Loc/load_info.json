@@ -1,0 +1,8 @@
+{
+  "weight_path": "/srv/share/hackathon/yolov7-pytorch-master/model_data/yolov7_weights.pth",
+  "load_policy": "shape_match",
+  "loaded_keys": 552,
+  "skipped_keys": 6,
+  "missing_keys": 6,
+  "unexpected_keys": 0
+}

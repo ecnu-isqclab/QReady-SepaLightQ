@@ -1,0 +1,40 @@
+model:
+  module: aircraft_classification.nets.efficientnet_b0_classifier
+  input_shape: [128, 128]
+  num_classes: 20
+  pretrained: false
+  dropout: 0.2
+  freeze_features: false
+
+weights:
+  path:
+  load_strict: false
+
+data:
+  root: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox
+  classes_path: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_classes.txt
+  train_list: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_crop_train.txt
+  val_list: /srv/share/hackathon/yolov7-pytorch-master/codex_new_code/mar20_hbb_crops_128_letterbox/mar20_crop_val.txt
+  train_image_dir:
+  val_image_dir:
+  use_weighted_sampler: false
+
+train:
+  experiment_name: efficientnet_b0_mar20_cls
+  save_dir: /srv/share/hackathon/aircraft_classification/logs
+  epochs: 50
+  batch_size: 64
+  num_workers: 4
+  device: cuda
+  seed: 11
+  fp16: false
+  label_smoothing: 0.05
+
+optimizer:
+  type: adamw
+  lr: 0.0003
+  weight_decay: 0.0001
+
+scheduler:
+  type: cosine
+  min_lr_ratio: 0.01
