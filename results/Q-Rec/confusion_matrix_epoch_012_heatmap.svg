@@ -8,46 +8,46 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#111827}
 <text x="92" y="34" class="title">Confusion Matrix Heatmap</text>
 <text x="92" y="56" class="small">Overall Acc: 81.83% | Macro Precision: 77.67% | Macro Recall: 74.61% | Macro F1: 74.73% | Weighted F1: 80.40%</text>
 <text x="384.0" y="78" class="axis">Predicted class</text>
-<text x="18" y="496.0" class="axis" transform="rotate(-90 18 496.0)">Real class</text>
-<text x="109.0" y="108" class="small" text-anchor="start" transform="rotate(-45 109.0 108)">A1</text>
+<text x="30" y="496" class="axis" text-anchor="middle" transform="rotate(-90 30 496)">Real Class</text>
+<text x="109.0" y="108" class="small" text-anchor="middle">A1</text>
 <text x="82" y="142" class="label" text-anchor="end">A1</text>
-<text x="143.0" y="108" class="small" text-anchor="start" transform="rotate(-45 143.0 108)">A2</text>
+<text x="143.0" y="108" class="small" text-anchor="middle">A2</text>
 <text x="82" y="176" class="label" text-anchor="end">A2</text>
-<text x="177.0" y="108" class="small" text-anchor="start" transform="rotate(-45 177.0 108)">A3</text>
+<text x="177.0" y="108" class="small" text-anchor="middle">A3</text>
 <text x="82" y="210" class="label" text-anchor="end">A3</text>
-<text x="211.0" y="108" class="small" text-anchor="start" transform="rotate(-45 211.0 108)">A4</text>
+<text x="211.0" y="108" class="small" text-anchor="middle">A4</text>
 <text x="82" y="244" class="label" text-anchor="end">A4</text>
-<text x="245.0" y="108" class="small" text-anchor="start" transform="rotate(-45 245.0 108)">A5</text>
+<text x="245.0" y="108" class="small" text-anchor="middle">A5</text>
 <text x="82" y="278" class="label" text-anchor="end">A5</text>
-<text x="279.0" y="108" class="small" text-anchor="start" transform="rotate(-45 279.0 108)">A6</text>
+<text x="279.0" y="108" class="small" text-anchor="middle">A6</text>
 <text x="82" y="312" class="label" text-anchor="end">A6</text>
-<text x="313.0" y="108" class="small" text-anchor="start" transform="rotate(-45 313.0 108)">A7</text>
+<text x="313.0" y="108" class="small" text-anchor="middle">A7</text>
 <text x="82" y="346" class="label" text-anchor="end">A7</text>
-<text x="347.0" y="108" class="small" text-anchor="start" transform="rotate(-45 347.0 108)">A8</text>
+<text x="347.0" y="108" class="small" text-anchor="middle">A8</text>
 <text x="82" y="380" class="label" text-anchor="end">A8</text>
-<text x="381.0" y="108" class="small" text-anchor="start" transform="rotate(-45 381.0 108)">A9</text>
+<text x="381.0" y="108" class="small" text-anchor="middle">A9</text>
 <text x="82" y="414" class="label" text-anchor="end">A9</text>
-<text x="415.0" y="108" class="small" text-anchor="start" transform="rotate(-45 415.0 108)">A10</text>
+<text x="415.0" y="108" class="small" text-anchor="middle">A10</text>
 <text x="82" y="448" class="label" text-anchor="end">A10</text>
-<text x="449.0" y="108" class="small" text-anchor="start" transform="rotate(-45 449.0 108)">A11</text>
+<text x="449.0" y="108" class="small" text-anchor="middle">A11</text>
 <text x="82" y="482" class="label" text-anchor="end">A11</text>
-<text x="483.0" y="108" class="small" text-anchor="start" transform="rotate(-45 483.0 108)">A12</text>
+<text x="483.0" y="108" class="small" text-anchor="middle">A12</text>
 <text x="82" y="516" class="label" text-anchor="end">A12</text>
-<text x="517.0" y="108" class="small" text-anchor="start" transform="rotate(-45 517.0 108)">A13</text>
+<text x="517.0" y="108" class="small" text-anchor="middle">A13</text>
 <text x="82" y="550" class="label" text-anchor="end">A13</text>
-<text x="551.0" y="108" class="small" text-anchor="start" transform="rotate(-45 551.0 108)">A14</text>
+<text x="551.0" y="108" class="small" text-anchor="middle">A14</text>
 <text x="82" y="584" class="label" text-anchor="end">A14</text>
-<text x="585.0" y="108" class="small" text-anchor="start" transform="rotate(-45 585.0 108)">A15</text>
+<text x="585.0" y="108" class="small" text-anchor="middle">A15</text>
 <text x="82" y="618" class="label" text-anchor="end">A15</text>
-<text x="619.0" y="108" class="small" text-anchor="start" transform="rotate(-45 619.0 108)">A16</text>
+<text x="619.0" y="108" class="small" text-anchor="middle">A16</text>
 <text x="82" y="652" class="label" text-anchor="end">A16</text>
-<text x="653.0" y="108" class="small" text-anchor="start" transform="rotate(-45 653.0 108)">A17</text>
+<text x="653.0" y="108" class="small" text-anchor="middle">A17</text>
 <text x="82" y="686" class="label" text-anchor="end">A17</text>
-<text x="687.0" y="108" class="small" text-anchor="start" transform="rotate(-45 687.0 108)">A18</text>
+<text x="687.0" y="108" class="small" text-anchor="middle">A18</text>
 <text x="82" y="720" class="label" text-anchor="end">A18</text>
-<text x="721.0" y="108" class="small" text-anchor="start" transform="rotate(-45 721.0 108)">A19</text>
+<text x="721.0" y="108" class="small" text-anchor="middle">A19</text>
 <text x="82" y="754" class="label" text-anchor="end">A19</text>
-<text x="755.0" y="108" class="small" text-anchor="start" transform="rotate(-45 755.0 108)">A20</text>
+<text x="755.0" y="108" class="small" text-anchor="middle">A20</text>
 <text x="82" y="788" class="label" text-anchor="end">A20</text>
 <rect x="92" y="120" width="34" height="34" fill="rgb(83,81,151)" stroke="#111827" stroke-width="1.2"><title>actual=A1, predicted=A1, count=130, row_pct=82.28%</title></rect>
 <text x="109.0" y="135" class="tiny" text-anchor="middle" fill="#ffffff">130</text>

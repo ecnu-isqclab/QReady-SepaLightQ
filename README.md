@@ -124,6 +124,14 @@ cd QReady-SepaLightQ所在位置
 results/pipeline/MAR20_test_labeled_pipeline/
 ```
 
+最终结果：/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_macro_pipeline
+Annotations是我们预测出的xml，方便与真实xml对比。
+crops_128_white保存的是单独裁出的每个飞机框，是我们做的数据预处理
+visualizations保存了30张可视化结果
+summary.json说明了我们的各种文件以及路径保存
+metrics_summary.json存了评估指标结果
+其他为中间文件
+
 该命令会生成检测裁剪结果、分类结果、预测 XML、可视化结果，并根据 `Horizontal Bounding Boxes` 计算 Precision、Recall、F1、mean IoU、mAP。
 
 ### 3.2 对 MAR20 txt 列表运行完整流水线
