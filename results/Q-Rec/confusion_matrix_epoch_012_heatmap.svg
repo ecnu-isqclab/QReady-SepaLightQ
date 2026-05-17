@@ -6,10 +6,9 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#111827}
 </style>
 <rect width="100%" height="100%" fill="#ffffff"/>
 <text x="92" y="34" class="title">Confusion Matrix Heatmap</text>
-<text x="92" y="56" class="small">Source: aircraft_classification/logs/efficientnet_b0_qnn_mar20_cls_cpu_finetune/2026_05_16_20_04_59/confusion_matrix_epoch_012.csv</text>
-<text x="92" y="78" class="small">Overall Acc: 81.83% | Macro Precision: 77.67% | Macro Recall: 74.61% | Macro F1: 74.73% | Weighted F1: 80.40%</text>
-<text x="384.0" y="60" class="axis">Predicted class</text>
-<text x="18" y="496.0" class="axis" transform="rotate(-90 18 496.0)">Actual class</text>
+<text x="92" y="56" class="small">Overall Acc: 81.83% | Macro Precision: 77.67% | Macro Recall: 74.61% | Macro F1: 74.73% | Weighted F1: 80.40%</text>
+<text x="384.0" y="78" class="axis">Predicted class</text>
+<text x="18" y="496.0" class="axis" transform="rotate(-90 18 496.0)">Real class</text>
 <text x="109.0" y="108" class="small" text-anchor="start" transform="rotate(-45 109.0 108)">A1</text>
 <text x="82" y="142" class="label" text-anchor="end">A1</text>
 <text x="143.0" y="108" class="small" text-anchor="start" transform="rotate(-45 143.0 108)">A2</text>
@@ -867,7 +866,4 @@ text{font-family:Arial,Helvetica,sans-serif;fill:#111827}
 <rect x="364" y="838" width="34" height="12" fill="rgb(87,86,154)" stroke="#ffffff"/>
 <rect x="398" y="838" width="34" height="12" fill="rgb(68,66,142)" stroke="#ffffff"/>
 <rect x="432" y="838" width="34" height="12" fill="rgb(49,46,129)" stroke="#ffffff"/>
-<text x="92" y="868" class="small">0% of actual class</text>
-<text x="410" y="868" class="small">100%</text>
-<text x="92" y="874" class="small">Cell text shows count and row percentage. Heat color is normalized within each actual-class row. Largest class support in a row: 276.</text>
 </svg>

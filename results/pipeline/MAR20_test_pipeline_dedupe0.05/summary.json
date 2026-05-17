@@ -1,0 +1,22 @@
+{
+  "list_path": "/srv/share/hackathon/QReady-SepaLightQ/configs/Q-Loc/MAR20_test.txt",
+  "ground_truth_source": "/srv/share/hackathon/QReady-SepaLightQ/configs/Q-Loc/MAR20_test.txt",
+  "detection_source": "yolov7 forward_runtime.run_detector using active setting.py",
+  "source_image_count": 200,
+  "crop_count": 1376,
+  "box_format": "x1,y1,x2,y2,class_id (top-left and bottom-right corners)",
+  "pending_txt": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/detected_crops_pending_class.txt",
+  "final_txt": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/detected_crops_with_pred_class.txt",
+  "classification_csv": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/classification_predictions.csv",
+  "visualization_dir": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/visualizations",
+  "visualize_count": 30,
+  "metrics_summary": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/metrics_summary.json",
+  "per_class_metrics": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/per_class_metrics.csv",
+  "prediction_annotations_dir": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe0.05/Annotations",
+  "evaluation_enabled": true,
+  "iou_threshold": 0.5,
+  "score_mode": "combined",
+  "dedupe_iou": 0.5,
+  "classifier_config": "/srv/share/hackathon/QReady-SepaLightQ/configs/Q-Rec/efficientnet_b0_qnn_mar20_cls_cpu_finetune.yaml",
+  "classifier_checkpoint": "/srv/share/hackathon/QReady-SepaLightQ/weights/Q-Rec/best.pth"
+}

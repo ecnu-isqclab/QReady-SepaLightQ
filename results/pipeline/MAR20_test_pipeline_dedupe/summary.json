@@ -12,6 +12,7 @@
   "visualize_count": 30,
   "metrics_summary": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe/metrics_summary.json",
   "per_class_metrics": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe/per_class_metrics.csv",
+  "prediction_annotations_dir": "/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/MAR20_test_pipeline_dedupe/Annotations",
   "evaluation_enabled": true,
   "iou_threshold": 0.5,
   "score_mode": "combined",

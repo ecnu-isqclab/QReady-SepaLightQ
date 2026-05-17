@@ -1,0 +1,30 @@
+<annotation>
+	<filename>1651.jpg</filename>
+	<source>
+		<database>MAR20</database>
+	</source>
+	<size>
+		<width>800</width>
+		<height>800</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>A10</name>
+		<bndbox>
+			<xmin>112</xmin>
+			<ymin>634</ymin>
+			<xmax>217</xmax>
+			<ymax>744</ymax>
+		</bndbox>
+	</object>
+	<object>
+		<name>A8</name>
+		<bndbox>
+			<xmin>548</xmin>
+			<ymin>121</ymin>
+			<xmax>675</xmax>
+			<ymax>253</ymax>
+		</bndbox>
+	</object>
+</annotation>

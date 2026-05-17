@@ -1,4 +1,0 @@
-/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/smoke_annotations_integrated/crops_128_white/25_obj000.jpg 694,579,804,680
-/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/smoke_annotations_integrated/crops_128_white/25_obj001.jpg 558,526,669,629
-/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/smoke_annotations_integrated/crops_128_white/25_obj002.jpg 521,223,628,329
-/srv/share/hackathon/QReady-SepaLightQ/results/pipeline/smoke_annotations_integrated/crops_128_white/25_obj003.jpg 598,830,709,930

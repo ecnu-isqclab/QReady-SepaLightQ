@@ -133,13 +133,39 @@ def parse_args() -> argparse.Namespace:
 
 
 def resolve_dataset_dir(dataset_name: str) -> Path:
-    dataset_dir = YOLO_ROOT / "test" / "Q-Loc" / "evaluation" / "testing_data" / dataset_name
-    if (dataset_dir / "JPEGImages").exists():
+    raw_path = Path(dataset_name)
+    dataset_dir = raw_path if raw_path.is_absolute() else YOLO_ROOT / raw_path
+    if not dataset_dir.exists():
+        dataset_dir = YOLO_ROOT / "test" / "Q-Loc" / "evaluation" / "testing_data" / dataset_name
+    if find_image_dir(dataset_dir) is not None:
         return dataset_dir
     voc_dir = dataset_dir / "VOC2007"
-    if (voc_dir / "JPEGImages").exists():
+    if find_image_dir(voc_dir) is not None:
         return voc_dir
-    raise FileNotFoundError(f"Dataset does not contain JPEGImages: {dataset_dir}")
+    raise FileNotFoundError(f"Dataset does not contain JPEGImages or MAR20-JPEGImages_test: {dataset_dir}")
+
+
+def find_image_dir(dataset_dir: Path) -> Path | None:
+    candidates = (
+        dataset_dir / "JPEGImages",
+        dataset_dir / "MAR20-JPEGImages_test",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_annotation_dir(dataset_dir: Path) -> Path | None:
+    candidates = (
+        dataset_dir / "Annotations",
+        dataset_dir / "MAR20-Annotations_test" / "Horizontal Bounding Boxes",
+        dataset_dir / "MAR20-Annotations_train" / "Horizontal Bounding Boxes",
+    )
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def find_image_path(image_dir: Path, image_id: str) -> Path | None:
@@ -151,7 +177,9 @@ def find_image_path(image_dir: Path, image_id: str) -> Path | None:
 
 
 def image_paths_for_dataset(dataset_dir: Path, max_images: int | None, image_ids: list[str] | None) -> list[Path]:
-    image_dir = dataset_dir / "JPEGImages"
+    image_dir = find_image_dir(dataset_dir)
+    if image_dir is None:
+        raise FileNotFoundError(f"Dataset does not contain an image directory: {dataset_dir}")
     if image_ids:
         paths = []
         for image_id in image_ids:
@@ -347,7 +375,9 @@ def load_class_names_from_config(config_path: Path) -> list[str]:
 
 def load_ground_truths(dataset_dir: Path, image_paths: list[Path], class_names: list[str]) -> dict[str, list[GroundTruthBox]]:
     class_to_id = {class_name: index for index, class_name in enumerate(class_names)}
-    annotation_dir = dataset_dir / "Annotations"
+    annotation_dir = find_annotation_dir(dataset_dir)
+    if annotation_dir is None:
+        annotation_dir = dataset_dir / "Annotations"
     gt_by_image: dict[str, list[GroundTruthBox]] = {}
     for image_path in image_paths:
         image_id = image_path.stem
@@ -710,6 +740,22 @@ def compute_detection_metrics(
         if micro_precision + micro_recall
         else 0.0
     )
+    macro_rows = [row for row in per_class_rows if int(row["gt_count"]) > 0]
+    macro_precision = (
+        sum(float(row["precision"]) for row in macro_rows) / len(macro_rows)
+        if macro_rows
+        else 0.0
+    )
+    macro_recall = (
+        sum(float(row["recall"]) for row in macro_rows) / len(macro_rows)
+        if macro_rows
+        else 0.0
+    )
+    macro_f1 = (
+        sum(float(row["f1"]) for row in macro_rows) / len(macro_rows)
+        if macro_rows
+        else 0.0
+    )
     valid_aps = [row["ap"] for row in per_class_rows if row["ap"] is not None]
     mean_ap = sum(valid_aps) / len(valid_aps) if valid_aps else 0.0
     mean_iou = (
@@ -725,9 +771,14 @@ def compute_detection_metrics(
         "tp": total_tp,
         "fp": total_fp,
         "fn": total_fn,
-        "precision": micro_precision,
-        "recall": micro_recall,
-        "f1": micro_f1,
+        "precision": macro_precision,
+        "recall": macro_recall,
+        "f1": macro_f1,
+        "metric_average": "macro",
+        "macro_class_count": len(macro_rows),
+        "micro_precision": micro_precision,
+        "micro_recall": micro_recall,
+        "micro_f1": micro_f1,
         "IoU": mean_iou,
         "mean_iou": mean_iou,
         "mAP": mean_ap,
@@ -805,7 +856,8 @@ def main() -> None:
     gt_by_image: dict[str, list[GroundTruthBox]] = {}
     dataset_dir = resolve_dataset_dir(args.dataset_name)
     image_paths = image_paths_for_dataset(dataset_dir, args.max_images, args.image_id)
-    gt_source = str((dataset_dir / "Annotations").resolve())
+    annotation_dir = find_annotation_dir(dataset_dir)
+    gt_source = str(annotation_dir.resolve()) if annotation_dir is not None else str((dataset_dir / "Annotations").resolve())
 
     if args.location_json_dir:
         detections_by_image = load_json_detections(image_paths, args.location_json_dir, args.progress_interval)
